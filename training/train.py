@@ -91,6 +91,7 @@ def main():
     parser.add_argument("--embedding-dim", type=int, default=512)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--resume", action="store_true", help="Resume from latest checkpoint")
     args = parser.parse_args()
 
     # Setup device
@@ -128,15 +129,32 @@ def main():
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     scaler = GradScaler()
 
+    # Resume from checkpoint if requested
+    start_epoch = 1
+    best_val_acc = 0
+    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
+
+    latest_checkpoint = args.output_dir / "latest_checkpoint.pt"
+    if args.resume and latest_checkpoint.exists():
+        print(f"\nResuming from checkpoint: {latest_checkpoint}")
+        checkpoint = torch.load(latest_checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
+        start_epoch = checkpoint["epoch"] + 1
+        best_val_acc = checkpoint.get("best_val_acc", 0)
+        history = checkpoint.get("history", history)
+        print(f"Resuming from epoch {start_epoch}, best_val_acc: {100*best_val_acc:.2f}%")
+    elif args.resume:
+        print("\nNo checkpoint found, starting from scratch...")
+
     # Training loop
     print("\n" + "=" * 60)
     print("Starting training...")
     print("=" * 60)
 
-    best_val_acc = 0
-    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
-
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         print(f"\nEpoch {epoch}/{args.epochs}")
         print("-" * 40)
 
@@ -171,6 +189,20 @@ def main():
                 "embedding_dim": args.embedding_dim,
             }, checkpoint_path)
             print(f"Saved best model (val_acc: {100*val_acc:.2f}%)")
+
+        # Save latest checkpoint (for resume)
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "scaler_state_dict": scaler.state_dict(),
+            "best_val_acc": best_val_acc,
+            "history": history,
+            "num_classes": num_classes,
+            "embedding_dim": args.embedding_dim,
+        }, args.output_dir / "latest_checkpoint.pt")
+        print(f"Saved checkpoint (epoch {epoch})")
 
     # Save final model
     final_path = args.output_dir / "final_model.pt"

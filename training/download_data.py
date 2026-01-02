@@ -275,6 +275,15 @@ def create_metadata(cards_by_name):
 
 
 def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Download MTG card images from Scryfall")
+    parser.add_argument("--max-images", type=int, default=1000,
+                        help="Maximum total images to download (default: 1000)")
+    parser.add_argument("--max-per-card", type=int, default=3,
+                        help="Maximum images per unique card name (default: 3)")
+    args = parser.parse_args()
+
     print("=" * 60)
     print("MTG Card Image Downloader")
     print("=" * 60)
@@ -290,27 +299,15 @@ def main():
     cards_by_name = filter_cards(cards)
 
     # Step 4: Download images
-    # Start with a subset for testing, then scale up
-    print("\n" + "=" * 60)
-    print("Image Download Options:")
-    print("  1. Test set (1000 cards, ~100MB)")
-    print("  2. Medium set (10000 cards, ~1GB)")
-    print("  3. Full set (all cards, ~8GB)")
-    print("=" * 60)
-
-    # For initial testing, download test set
-    # Change max_total for larger sets
-    MAX_TOTAL = 1000  # Start small
-    MAX_PER_CARD = 3  # Multiple printings per card
-
-    download_images(cards_by_name, max_per_card=MAX_PER_CARD, max_total=MAX_TOTAL)
+    print(f"\nDownloading up to {args.max_images} images (max {args.max_per_card} per card)...")
+    download_images(cards_by_name, max_per_card=args.max_per_card, max_total=args.max_images)
 
     # Step 5: Create metadata
     create_metadata(cards_by_name)
 
     print("\n" + "=" * 60)
     print("Done! Next steps:")
-    print("  1. Run training: python train_model.py")
+    print("  1. Run training: python train.py --epochs 30 --batch-size 32")
     print("=" * 60)
 
 

@@ -5,9 +5,12 @@ Generate embeddings for all card images and build FAISS index.
 import json
 from pathlib import Path
 
+import cv2
 import faiss
 import numpy as np
 import torch
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
 
 from dataset import MTGCardDataset
@@ -65,6 +68,58 @@ def build_faiss_index(embeddings, embedding_dim):
     index.add(embeddings)
 
     return index
+
+
+@torch.no_grad()
+def generate_reference_embeddings(model, data_dir: Path, metadata_file: Path, device, batch_size=32):
+    """Generate embeddings for reference images (one per card)."""
+    # Load metadata
+    with open(metadata_file, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    # Setup transform
+    transform = A.Compose([
+        A.Resize(224, 224),
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2(),
+    ])
+
+    # Build list of (card_name, image_path)
+    card_names = []
+    image_paths = []
+    for card_name, info in metadata.items():
+        img_path = data_dir / info["filename"]
+        if img_path.exists():
+            card_names.append(card_name)
+            image_paths.append(img_path)
+
+    print(f"Found {len(card_names)} reference images")
+
+    # Generate embeddings in batches
+    embeddings = []
+    for i in tqdm(range(0, len(image_paths), batch_size), desc="Generating reference embeddings"):
+        batch_paths = image_paths[i:i + batch_size]
+        batch_images = []
+
+        for img_path in batch_paths:
+            try:
+                with open(img_path, 'rb') as f:
+                    img_array = np.frombuffer(f.read(), dtype=np.uint8)
+                image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                transformed = transform(image=image)
+                batch_images.append(transformed["image"])
+            except Exception as e:
+                # Use zeros for failed images
+                batch_images.append(torch.zeros(3, 224, 224))
+
+        # Stack and process batch
+        batch_tensor = torch.stack(batch_images).to(device)
+        batch_embeddings = model.get_embedding(batch_tensor)
+        embeddings.append(batch_embeddings.cpu().numpy())
+
+    embeddings = np.vstack(embeddings)
+    return embeddings, card_names
 
 
 def test_retrieval(model, train_dataset, val_dataset, device):
@@ -134,7 +189,17 @@ def main():
     parser.add_argument("--output-dir", type=Path,
                         default=Path(__file__).parent / "output")
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--reference", action="store_true",
+                        help="Build index from reference images (full 32K card database)")
     args = parser.parse_args()
+
+    # Override paths for reference mode
+    if args.reference:
+        args.data_dir = Path(__file__).parent / "data" / "reference_images"
+        args.metadata = Path(__file__).parent / "data" / "reference_metadata.json"
+        print("=" * 60)
+        print("REFERENCE MODE: Building full card database index")
+        print("=" * 60)
 
     # Setup
     if args.device == "auto":
@@ -150,51 +215,89 @@ def main():
     model, embedding_dim = load_model(args.checkpoint, device)
     print(f"Model loaded (embedding_dim={embedding_dim})")
 
-    # Create datasets
-    train_dataset = MTGCardDataset(
-        data_dir=args.data_dir,
-        metadata_file=args.metadata,
-        transform=MTGCardDataset.val_transform(),  # No augmentation for embedding generation
-        split="train",
-    )
+    if args.reference:
+        # Reference mode: build full card database index
+        print(f"\nGenerating embeddings for reference images...")
+        print(f"  Data dir: {args.data_dir}")
+        print(f"  Metadata: {args.metadata}")
 
-    val_dataset = MTGCardDataset(
-        data_dir=args.data_dir,
-        metadata_file=args.metadata,
-        transform=MTGCardDataset.val_transform(),
-        split="val",
-    )
+        all_embeddings, card_names = generate_reference_embeddings(
+            model, args.data_dir, args.metadata, device
+        )
 
-    # Test retrieval accuracy
-    top1, top5 = test_retrieval(model, train_dataset, val_dataset, device)
+        # Build and save FAISS index
+        print("\nBuilding FAISS index...")
+        index = build_faiss_index(all_embeddings.copy(), embedding_dim)
 
-    # Generate embeddings for all training images (for deployment)
-    print("\n" + "=" * 60)
-    print("Generating final embeddings for deployment...")
-    print("=" * 60)
+        index_path = args.output_dir / "card_embeddings_full.faiss"
+        faiss.write_index(index, str(index_path))
+        print(f"Saved FAISS index to {index_path}")
 
-    all_embeddings, all_labels = generate_embeddings(model, train_dataset, device)
+        # Save label mapping (card names in order)
+        label_mapping = {
+            "card_names": card_names,
+            "num_cards": len(card_names),
+            "embedding_dim": embedding_dim,
+        }
+        mapping_path = args.output_dir / "label_mapping_full.json"
+        with open(mapping_path, "w", encoding="utf-8") as f:
+            json.dump(label_mapping, f, indent=2)
+        print(f"Saved label mapping to {mapping_path}")
 
-    # Build and save FAISS index
-    index = build_faiss_index(all_embeddings.copy(), embedding_dim)
-    faiss.write_index(index, str(args.output_dir / "card_embeddings.faiss"))
-    print(f"Saved FAISS index to {args.output_dir / 'card_embeddings.faiss'}")
+        print("\n" + "=" * 60)
+        print("REFERENCE INDEX COMPLETE!")
+        print("=" * 60)
+        print(f"\nTotal cards indexed: {len(card_names)}")
+        print(f"Embedding dimension: {embedding_dim}")
+        print(f"Index size: {index_path.stat().st_size / 1024 / 1024:.1f} MB")
+        print(f"\nFiles saved to {args.output_dir}/")
 
-    # Save label mapping
-    label_mapping = {
-        "idx_to_name": train_dataset.idx_to_class,
-        "labels": all_labels.tolist(),
-    }
-    with open(args.output_dir / "label_mapping.json", "w") as f:
-        json.dump(label_mapping, f, indent=2)
-    print(f"Saved label mapping to {args.output_dir / 'label_mapping.json'}")
+    else:
+        # Original mode: test with training data
+        train_dataset = MTGCardDataset(
+            data_dir=args.data_dir,
+            metadata_file=args.metadata,
+            transform=MTGCardDataset.val_transform(),
+            split="train",
+        )
 
-    print("\n" + "=" * 60)
-    print("Done!")
-    print("=" * 60)
-    print(f"\nTrain self-retrieval: {100*top1:.1f}%")
-    print(f"(This measures: can we find another image of the same card?)")
-    print(f"\nFiles saved to {args.output_dir}/")
+        val_dataset = MTGCardDataset(
+            data_dir=args.data_dir,
+            metadata_file=args.metadata,
+            transform=MTGCardDataset.val_transform(),
+            split="val",
+        )
+
+        # Test retrieval accuracy
+        train_retrieval_acc, val_top1_acc = test_retrieval(model, train_dataset, val_dataset, device)
+
+        # Generate embeddings for all training images (for deployment)
+        print("\n" + "=" * 60)
+        print("Generating final embeddings for deployment...")
+        print("=" * 60)
+
+        all_embeddings, all_labels = generate_embeddings(model, train_dataset, device)
+
+        # Build and save FAISS index
+        index = build_faiss_index(all_embeddings.copy(), embedding_dim)
+        faiss.write_index(index, str(args.output_dir / "card_embeddings.faiss"))
+        print(f"Saved FAISS index to {args.output_dir / 'card_embeddings.faiss'}")
+
+        # Save label mapping
+        label_mapping = {
+            "idx_to_name": train_dataset.idx_to_class,
+            "labels": all_labels.tolist(),
+        }
+        with open(args.output_dir / "label_mapping.json", "w") as f:
+            json.dump(label_mapping, f, indent=2)
+        print(f"Saved label mapping to {args.output_dir / 'label_mapping.json'}")
+
+        print("\n" + "=" * 60)
+        print("Done!")
+        print("=" * 60)
+        print(f"\nTrain self-retrieval: {100*train_retrieval_acc:.1f}%")
+        print(f"(This measures: can we find another image of the same card?)")
+        print(f"\nFiles saved to {args.output_dir}/")
 
 
 if __name__ == "__main__":

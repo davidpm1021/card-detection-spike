@@ -28,6 +28,9 @@ git clone https://github.com/davidpm1021/card-detection-spike.git
 cd card-detection-spike
 
 # 2. Create virtual environment
+# Windows: Use 'py' launcher if 'python' command doesn't work
+py -m venv venv
+# OR if you have python in PATH:
 python -m venv venv
 
 # 3. Activate virtual environment
@@ -43,14 +46,23 @@ pip install -r training/requirements.txt
 
 # 5. Download training images from Scryfall (~5 minutes)
 cd training
+# Windows: Use 'py' if 'python' doesn't work
+py download_data.py --max-images 1000
+# OR:
 python download_data.py --max-images 1000
 
 # 6. Train the model (~30-60 min on CPU, ~10 min on GPU)
+py train.py --epochs 30 --batch-size 32
+# OR:
 python train.py --epochs 30 --batch-size 32
 
 # 7. Generate the FAISS search index
+py generate_embeddings.py
+# OR:
 python generate_embeddings.py
 ```
+
+**Windows Note:** If you see "Python was not found" when using `python`, try using `py` instead (Python launcher). Alternatively, you can disable the Windows Store Python alias in Settings > Apps > Advanced app settings > App execution aliases.
 
 ### Verify It Worked
 
