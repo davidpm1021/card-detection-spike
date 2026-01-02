@@ -37,13 +37,16 @@ from model import CardEmbeddingModel
 class CardDetector:
     """Detects card regions in images using contour detection."""
 
-    def __init__(self, min_area=5000, max_area=500000):
+    def __init__(self, min_area=15000, max_area=400000):
+        # Increased min_area to filter out small false positives
         self.min_area = min_area
         self.max_area = max_area
 
     def detect(self, frame, fast_mode=True):
         """
         Detect card-like rectangles in the frame.
+
+        Uses CLAHE in LAB color space for robust detection across lighting conditions.
 
         Args:
             frame: Input BGR image
@@ -53,31 +56,70 @@ class CardDetector:
         Returns:
             List of (contour, corners) tuples for detected cards
         """
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         kernel = np.ones((3, 3), np.uint8)
 
+        # Preprocess with CLAHE in LAB color space (standard approach for card detection)
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l_channel = lab[:, :, 0]
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced_l = clahe.apply(l_channel)
+
+        # Also try on individual RGB channels for colored borders
+        b, g, r = cv2.split(frame)
+
         if fast_mode:
-            # Fast path: single method
-            edges = cv2.Canny(blurred, 30, 100)
+            # Try CLAHE-enhanced luminance first
+            blurred = cv2.GaussianBlur(enhanced_l, (5, 5), 0)
+            edges = cv2.Canny(blurred, 50, 150)
             edges = cv2.dilate(edges, kernel, iterations=2)
             cards = self._find_cards_in_edges(edges)
 
-            # If no cards found, try one more method (adaptive threshold)
             if not cards:
+                # Try adaptive threshold on enhanced image
                 adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                                  cv2.THRESH_BINARY, 11, 2)
-                edges = cv2.Canny(adaptive, 50, 150)
+                edges = cv2.Canny(adaptive, 30, 100)
+                edges = cv2.dilate(edges, kernel, iterations=2)
+                cards = self._find_cards_in_edges(edges)
+
+            if not cards:
+                # Try blue channel (good for black-bordered cards)
+                blurred_b = cv2.GaussianBlur(b, (5, 5), 0)
+                edges = cv2.Canny(blurred_b, 30, 100)
                 edges = cv2.dilate(edges, kernel, iterations=2)
                 cards = self._find_cards_in_edges(edges)
 
             return cards
         else:
-            # Thorough mode: try all methods
+            # Thorough mode: try multiple channels and methods
             cards = []
-            for edges in self._get_edge_maps(frame, blurred, gray, kernel):
-                detected = self._find_cards_in_edges(edges)
-                cards.extend(detected)
+
+            # Method 1: CLAHE-enhanced luminance
+            blurred = cv2.GaussianBlur(enhanced_l, (5, 5), 0)
+            edges = cv2.Canny(blurred, 50, 150)
+            edges = cv2.dilate(edges, kernel, iterations=2)
+            cards.extend(self._find_cards_in_edges(edges))
+
+            # Method 2: Adaptive threshold on CLAHE
+            adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                             cv2.THRESH_BINARY, 11, 2)
+            edges = cv2.Canny(adaptive, 30, 100)
+            edges = cv2.dilate(edges, kernel, iterations=2)
+            cards.extend(self._find_cards_in_edges(edges))
+
+            # Method 3-5: Individual RGB channels
+            for channel in [b, g, r]:
+                blurred_ch = cv2.GaussianBlur(channel, (5, 5), 0)
+                edges = cv2.Canny(blurred_ch, 30, 100)
+                edges = cv2.dilate(edges, kernel, iterations=2)
+                cards.extend(self._find_cards_in_edges(edges))
+
+            # Method 6: Otsu thresholding
+            _, otsu = cv2.threshold(enhanced_l, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            edges = cv2.Canny(otsu, 50, 150)
+            edges = cv2.dilate(edges, kernel, iterations=2)
+            cards.extend(self._find_cards_in_edges(edges))
+
             return self._remove_duplicates(cards)
 
     def _get_edge_maps(self, frame, blurred, gray, kernel):
@@ -114,6 +156,8 @@ class CardDetector:
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         cards = []
+        card_parts = []  # Collect potential card parts (text box, art box)
+
         for contour in contours:
             area = cv2.contourArea(contour)
             if area < self.min_area or area > self.max_area:
@@ -130,6 +174,17 @@ class CardDetector:
                     if self._is_card_shaped(corners):
                         cards.append((contour, corners))
                         break
+                    else:
+                        # Might be a card part (text box, art box) - save for later
+                        rect = cv2.minAreaRect(contour)
+                        w, h = rect[1]
+                        if w > 0 and h > 0:
+                            aspect = min(w, h) / max(w, h)
+                            min_dim = min(w, h)
+                            # Text box is roughly 0.5-0.7 aspect, decent size
+                            if 0.4 < aspect < 0.75 and min_dim > 60:
+                                card_parts.append((contour, corners, rect))
+                    break
 
             # Also try minimum area rectangle for rounded corners (sleeves)
             if len(approx) != 4:
@@ -142,7 +197,103 @@ class CardDetector:
                     if rect_area > 0 and area / rect_area > 0.7:
                         cards.append((contour, corners))
 
+        # If no full cards found but we have card parts, try to combine them
+        if not cards and card_parts:
+            # Try to find card parts that are vertically aligned (same card)
+            if len(card_parts) >= 2:
+                combined = self._combine_card_parts(card_parts)
+                if combined is not None:
+                    cards.append((card_parts[0][0], combined))
+
+            # If still no card, expand the largest part
+            if not cards:
+                card_parts.sort(key=lambda x: cv2.contourArea(x[0]), reverse=True)
+                contour, corners, rect = card_parts[0]
+                expanded = self._expand_to_card(rect)
+                if expanded is not None:
+                    cards.append((contour, expanded))
+
         return cards
+
+    def _combine_card_parts(self, card_parts):
+        """Combine multiple card parts (text box, art box) into full card."""
+        # Get bounding boxes of all parts
+        all_corners = []
+        for contour, corners, rect in card_parts:
+            all_corners.extend(corners.tolist())
+
+        if len(all_corners) < 4:
+            return None
+
+        all_corners = np.array(all_corners)
+
+        # Find bounding rectangle of all parts
+        x_min, y_min = all_corners.min(axis=0)
+        x_max, y_max = all_corners.max(axis=0)
+
+        # Check if this forms a card-like shape
+        width = x_max - x_min
+        height = y_max - y_min
+
+        if width == 0 or height == 0:
+            return None
+
+        aspect = min(width, height) / max(width, height)
+
+        # Card aspect is ~0.716, allow some tolerance
+        if 0.6 < aspect < 0.8:
+            # Return corners of bounding box
+            return np.array([
+                [x_min, y_min],
+                [x_max, y_min],
+                [x_max, y_max],
+                [x_min, y_max]
+            ], dtype=np.float32)
+
+        return None
+
+    def _expand_to_card(self, rect):
+        """Expand a detected card part (text box) to full card dimensions."""
+        center, (w, h), angle = rect
+        cx, cy = center
+
+        # minAreaRect returns (width, height) where width is along the x-axis
+        # For a text box that's wider than tall, we want to expand vertically
+
+        # Text box is roughly 90% of card width and 35% of card height
+        # Calculate full card dimensions
+        text_box_width = max(w, h)  # The longer dimension is width
+        text_box_height = min(w, h)  # The shorter dimension is height
+
+        card_w = text_box_width / 0.88
+        card_h = card_w / 0.716  # MTG card aspect ratio (63/88)
+
+        # Text box center is roughly 65% down from top of card
+        # So we need to shift UP by (0.65 - 0.5) * card_h = 0.15 * card_h
+        shift_amount = card_h * 0.25
+
+        # Shift up in image coordinates (decrease Y)
+        # Account for rotation if any
+        angle_rad = np.radians(angle)
+
+        # For an upright card (angle ~0 or ~180), shift in Y direction
+        # The text box is at bottom, so shift center toward top
+        new_cy = cy - shift_amount  # Simple vertical shift for now
+        new_cx = cx
+
+        # Create corners manually for an axis-aligned rectangle
+        # (ignoring rotation for simplicity - cards are usually upright)
+        half_w = card_w / 2
+        half_h = card_h / 2
+
+        corners = np.array([
+            [new_cx - half_w, new_cy - half_h],  # top-left
+            [new_cx + half_w, new_cy - half_h],  # top-right
+            [new_cx + half_w, new_cy + half_h],  # bottom-right
+            [new_cx - half_w, new_cy + half_h],  # bottom-left
+        ], dtype=np.float32)
+
+        return corners
 
     def _remove_duplicates(self, cards):
         """Remove duplicate detections based on center proximity."""
@@ -182,7 +333,7 @@ class CardDetector:
             return False
 
         # Card aspect ratio is approximately 63mm x 88mm = 0.716
-        # Tighten tolerance: 0.65-0.78 instead of 0.5-0.9
+        # Tighter tolerance: 0.65-0.78 to avoid matching text boxes (~0.55-0.60)
         aspect = min(width, height) / max(width, height)
         if not (0.65 < aspect < 0.78):
             return False

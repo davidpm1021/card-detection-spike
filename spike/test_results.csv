@@ -1,0 +1,2 @@
+filename,expected,predicted,confidence,detected,correct,in_top5,detect_ms,id_ms,top5
+test_20260102_082758.jpg,Khenra Eternal,Gisa's Favorite Shovel,0.536,True,False,True,334.6,93.2,"Gisa's Favorite Shovel; Dusk Feaster; Khenra Eternal; Vilis, Broker of Blood; Silent-Blade Oni"

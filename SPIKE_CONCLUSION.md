@@ -8,10 +8,10 @@
 
 ## Executive Summary
 
-**Detection: PASS** - Finding cards in frame works reliably.
-**Identification: FAIL** - Identifying which card (from 35,000+) is not feasible with tested approaches.
+**Detection: CONDITIONAL PASS** - Works on simple backgrounds, fragile on complex scenes.
+**Identification: CONDITIONAL PASS** - Top-5 accuracy is good, top-1 needs improvement.
 
-**Recommendation:** Do not proceed with real-time webcam card identification as designed. Consider alternative approaches outlined below.
+**Recommendation:** Viable with constraints. Requires either (1) controlled background (playmat), or (2) trained object detector for robust detection.
 
 ---
 
@@ -89,6 +89,31 @@
 **Why it partially works:** Card names are the only consistent element across printings. Text doesn't change with artwork.
 
 **Why it fails on webcam:** Image quality too low, motion blur, OCR struggles with stylized MTG fonts.
+
+#### 6. FaceNet-Style Embeddings (MobileNetV3 + ArcFace + FAISS) ✓ NEW
+| Metric | Result |
+|--------|--------|
+| Training accuracy | 99.4% (396 cards, 1000 images) |
+| Self-retrieval accuracy | 94.4% |
+| Top-1 webcam accuracy | ~30-50% |
+| Top-5 webcam accuracy | ~80-100% |
+| Speed | ~90ms identification, ~330ms detection |
+| Card coverage | 32,062 cards indexed |
+
+**Why it works:**
+- Learned embeddings capture visual similarity across artwork variations
+- FAISS index enables fast nearest-neighbor search
+- ArcFace loss produces discriminative embeddings
+
+**Current limitations:**
+- Detection relies on text-box expansion (fragile)
+- Complex backgrounds cause detection failures
+- Top-1 confidence moderate (~0.5-0.7)
+
+**What's needed for production:**
+- Trained object detector (YOLO/CenterNet) for robust detection
+- OR controlled background (playmat/solid surface)
+- Fine-tuning on more webcam training data
 
 ---
 
@@ -180,17 +205,30 @@ production/
 
 ## Recommendation
 
-**Do not proceed** with real-time webcam card identification as originally designed.
+**CONDITIONAL GO** - Proceed with constraints.
 
-**If card identification is still required, consider:**
+The FaceNet-style embedding approach shows promise:
+- 32K cards indexed and searchable
+- Top-5 accuracy sufficient for "did you mean?" suggestions
+- ~420ms total latency (acceptable)
 
-1. **Capture-then-identify workflow** - User takes a photo, system processes it with cloud OCR, returns result in 1-2 seconds. Not real-time but achievable.
+**For production, choose one path:**
 
-2. **Barcode/QR approach** - If you control the cards (e.g., inventory system), add QR codes to sleeves or card holders.
+### Path A: Controlled Environment (Easier)
+- Require solid-color playmat or surface
+- Detection will be reliable with contour-based approach
+- Ship with current codebase + usage instructions
 
-3. **Manual entry with autocomplete** - User types first few letters, fuzzy search suggests matches. Faster than scanning with current tech.
+### Path B: Robust Detection (More Work)
+- Train YOLO/CenterNet on MTG card images
+- Use synthetic data generation (cards on random backgrounds)
+- ~1-2 weeks additional development
 
-4. **Wait for better tech** - Vision models are improving rapidly. Re-evaluate in 6-12 months.
+### Path C: Hybrid Approach (Recommended)
+- Use current detection with playmat recommendation
+- Show top-5 suggestions with confidence scores
+- User confirms correct card
+- Gracefully handle detection failures
 
 ---
 
@@ -208,6 +246,17 @@ production/
 
 ## Spike Status: COMPLETE
 
-**Go/No-Go Decision: NO-GO** for real-time webcam identification of all cards.
+**Go/No-Go Decision: CONDITIONAL GO**
 
-**Partial GO:** Card detection (finding rectangles) is production-ready if needed for other purposes.
+✓ Identification works (FaceNet embeddings + FAISS)
+✓ 32,062 cards indexed
+✓ Top-5 accuracy acceptable for suggestions
+✓ ~420ms latency meets requirements
+
+⚠ Detection needs controlled background OR trained detector
+⚠ Top-1 accuracy needs improvement for auto-identification
+
+**Next Steps if Proceeding:**
+1. Test with playmat/solid background to validate detection
+2. Collect more test images for accuracy measurement
+3. Decide: controlled environment vs. train YOLO detector
