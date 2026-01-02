@@ -33,6 +33,17 @@ sys.path.insert(0, str(TRAINING_DIR))
 
 from model import CardEmbeddingModel
 
+# Try to import YOLO detector
+YOLO_AVAILABLE = False
+try:
+    from yolo_detector import YOLODetector
+    # Check if trained model exists
+    yolo_model_path = TRAINING_DIR / "yolo" / "runs" / "detect" / "train" / "weights" / "best.pt"
+    yolo_onnx_path = TRAINING_DIR / "yolo" / "runs" / "detect" / "train" / "weights" / "best.onnx"
+    YOLO_AVAILABLE = yolo_model_path.exists() or yolo_onnx_path.exists()
+except ImportError:
+    pass
+
 
 class CardDetector:
     """Detects card regions in images using contour detection."""
@@ -497,8 +508,23 @@ class CardIdentifier:
 class WebcamInference:
     """Real-time webcam inference pipeline."""
 
-    def __init__(self, model_path, index_path, mapping_path, camera_id=0, resolution="1080p", fast_mode=False):
-        self.detector = CardDetector()
+    def __init__(self, model_path, index_path, mapping_path, camera_id=0, resolution="1080p", fast_mode=False, use_yolo=None):
+        # Select detector
+        if use_yolo is None:
+            use_yolo = YOLO_AVAILABLE  # Auto-detect
+
+        if use_yolo and YOLO_AVAILABLE:
+            print("Using YOLO detector (trained model found)")
+            self.detector = YOLODetector()
+            self.detector_type = "yolo"
+        else:
+            if use_yolo and not YOLO_AVAILABLE:
+                print("YOLO model not found, falling back to contour detection")
+            else:
+                print("Using contour-based detection")
+            self.detector = CardDetector()
+            self.detector_type = "contour"
+
         self.identifier = CardIdentifier(model_path, index_path, mapping_path)
         self.camera_id = camera_id
         self.resolution = resolution
@@ -634,8 +660,9 @@ class WebcamInference:
             self.frame_times.append(frame_time)
             fps = 1.0 / frame_time if frame_time > 0 else 0
 
-            # Draw FPS
-            cv2.putText(display_frame, f"FPS: {fps:.1f}", (10, 30),
+            # Draw FPS and detector type
+            detector_label = "YOLO" if self.detector_type == "yolo" else "Contour"
+            cv2.putText(display_frame, f"FPS: {fps:.1f} ({detector_label})", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             # Draw card count
@@ -785,6 +812,13 @@ def main():
     parser.add_argument("--mapping", type=Path,
                        default=TRAINING_DIR / "output" / "label_mapping_full.json",
                        help="Path to label mapping")
+    # YOLO detector options
+    yolo_group = parser.add_mutually_exclusive_group()
+    yolo_group.add_argument("--yolo", action="store_true", dest="use_yolo",
+                           help="Force use YOLO detector (requires trained model)")
+    yolo_group.add_argument("--no-yolo", action="store_false", dest="use_yolo",
+                           help="Force use contour-based detection (default if no YOLO model)")
+    parser.set_defaults(use_yolo=None)  # None = auto-detect
     args = parser.parse_args()
 
     # Apply fast mode settings
@@ -814,7 +848,8 @@ def main():
         # Run webcam inference
         pipeline = WebcamInference(
             args.model, args.index, args.mapping,
-            args.camera, args.resolution, fast_mode=args.fast
+            args.camera, args.resolution, fast_mode=args.fast,
+            use_yolo=args.use_yolo
         )
         pipeline.run()
 
