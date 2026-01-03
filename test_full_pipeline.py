@@ -86,16 +86,8 @@ while True:
         if card_img.size == 0:
             continue
 
-        # Debug: save card crop on 's' key
-        if cv2.waitKey(1) & 0xFF == ord('s'):
-            cv2.imwrite('debug_card_crop.jpg', card_img)
-            print(f"Saved debug_card_crop.jpg ({card_img.shape})")
-
-        # Resize card to consistent size for embedding (224x224)
-        card_resized = cv2.resize(card_img, (224, 224))
-
-        # Get embedding
-        rgb = cv2.cvtColor(card_resized, cv2.COLOR_BGR2RGB)
+        # Get embedding using original crop (not resized)
+        rgb = cv2.cvtColor(card_img, cv2.COLOR_BGR2RGB)
         transformed = transform(image=rgb)
         tensor = transformed["image"].unsqueeze(0)
 
@@ -104,11 +96,14 @@ while True:
 
         # Normalize and search
         faiss.normalize_L2(embedding)
-        distances, indices = index.search(embedding, 1)
+        distances, indices = index.search(embedding, 5)  # Get top 5
 
         if indices[0][0] < len(card_names):
             card_name = card_names[indices[0][0]]
             similarity = float(distances[0][0])
+
+            # Print top 3 matches for debugging
+            print(f"Top 3: {card_names[indices[0][0]]} ({distances[0][0]:.2f}), {card_names[indices[0][1]]} ({distances[0][1]:.2f}), {card_names[indices[0][2]]} ({distances[0][2]:.2f})")
 
             # Draw label
             label = f"{card_name[:30]} ({similarity:.2f})"
@@ -124,8 +119,17 @@ while True:
 
     cv2.imshow('Card Detection + ID', frame)
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    # Single waitKey for all key handling
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
         break
+    elif key == ord('s') and len(results.boxes) > 0:
+        # Save the first detected card crop for debugging
+        box = results.boxes[0]
+        x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+        debug_crop = frame[y1:y2, x1:x2]
+        cv2.imwrite('debug_card_crop.jpg', debug_crop)
+        print(f"Saved debug_card_crop.jpg ({debug_crop.shape})")
 
 cap.release()
 cv2.destroyAllWindows()
