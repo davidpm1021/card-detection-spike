@@ -12,6 +12,7 @@ Results are saved to accuracy_test_results.csv
 import sys
 import time
 import csv
+import os
 from datetime import datetime
 import cv2
 import numpy as np
@@ -28,6 +29,12 @@ CONFIDENCE_THRESHOLD = 0.6
 TARGET_CARDS = 60
 GLARE_CORRECTION = True  # Toggle glare correction preprocessing
 
+# Auto-capture settings
+AUTO_CAPTURE = True  # Auto-capture when prediction stabilizes
+STABILITY_FRAMES = 15  # Number of frames with same prediction to trigger capture
+STABILITY_CONFIDENCE_MIN = 0.40  # Minimum confidence to consider stable
+SAVE_CROPS = True  # Save cropped card images for review
+
 # Test conditions (edit these for your setup)
 TEST_CONDITIONS = {
     "webcam_resolution": "1280x960",
@@ -35,8 +42,14 @@ TEST_CONDITIONS = {
     "lighting": "typical room",
     "sleeves": "yes",
     "glare_correction": "yes" if GLARE_CORRECTION else "no",
+    "auto_capture": "yes" if AUTO_CAPTURE else "no",
     "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
 }
+
+# Create crops directory
+CROPS_DIR = "accuracy_test_crops"
+if SAVE_CROPS:
+    os.makedirs(CROPS_DIR, exist_ok=True)
 
 @dataclass
 class TestResult:
@@ -144,11 +157,17 @@ print("="*60)
 print(f"Conditions: {TEST_CONDITIONS['lighting']}, {TEST_CONDITIONS['sleeves']} sleeves, {TEST_CONDITIONS['webcam_resolution']}")
 print()
 print("Controls (press in the VIDEO WINDOW, not terminal):")
-print("  SPACE or ENTER = Prediction is CORRECT")
+if AUTO_CAPTURE:
+    print("  AUTO-CAPTURE enabled - will capture when prediction stabilizes")
+    print("  Just press X if the auto-captured prediction is WRONG")
+else:
+    print("  SPACE or ENTER = Prediction is CORRECT")
 print("  X = Prediction is WRONG")
 print("  G = Toggle glare correction")
 print("  Q = Quit and save results")
 print(f"\nGlare correction: {'ON' if GLARE_CORRECTION else 'OFF'}")
+print(f"Auto-capture: {'ON' if AUTO_CAPTURE else 'OFF'} (stability: {STABILITY_FRAMES} frames)")
+print(f"Saving crops: {'ON' if SAVE_CROPS else 'OFF'}")
 print("="*60)
 
 cap = cv2.VideoCapture(CAMERA_INDEX)
@@ -172,8 +191,14 @@ current_prediction = None
 current_confidence = 0.0
 current_top3 = ""
 current_top5 = []
+current_crop = None  # Store current card crop
 card_count = 0
 glare_enabled = GLARE_CORRECTION  # Local copy for toggling
+
+# Stability tracking
+stability_history = []  # List of recent predictions
+stability_count = 0  # Consecutive frames with same prediction
+last_stable_prediction = None
 
 while card_count < TARGET_CARDS:
     ret, frame = cap.read()
@@ -202,6 +227,7 @@ while card_count < TARGET_CARDS:
         # Get identification
         card_img = frame[y1:y2, x1:x2]
         if card_img.size > 0:
+            current_crop = card_img.copy()  # Save crop for later
             embedding = get_embedding(card_img, apply_glare_correction=glare_enabled)
             current_top5 = identify_card(embedding)
 
@@ -209,10 +235,33 @@ while card_count < TARGET_CARDS:
             current_confidence = current_top5[0][1]
             current_top3 = f"{current_top5[0][0]} ({current_top5[0][1]:.2f}), {current_top5[1][0]} ({current_top5[1][1]:.2f}), {current_top5[2][0]} ({current_top5[2][1]:.2f})"
 
+            # Track stability
+            if current_confidence >= STABILITY_CONFIDENCE_MIN:
+                if len(stability_history) > 0 and stability_history[-1] == current_prediction:
+                    stability_count += 1
+                else:
+                    stability_count = 1
+                stability_history.append(current_prediction)
+                if len(stability_history) > STABILITY_FRAMES:
+                    stability_history.pop(0)
+            else:
+                stability_count = 0
+                stability_history = []
+
             # Display prediction
             label = f"Predicted: {current_prediction[:40]}"
             cv2.putText(display, label, (x1, y1 - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.putText(display, f"Confidence: {current_confidence:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+            # Show stability progress bar
+            if AUTO_CAPTURE:
+                stability_pct = min(stability_count / STABILITY_FRAMES, 1.0)
+                bar_width = int(200 * stability_pct)
+                bar_color = (0, 255, 255) if stability_pct < 1.0 else (0, 255, 0)
+                cv2.rectangle(display, (x1, y2 + 10), (x1 + 200, y2 + 30), (100, 100, 100), -1)
+                cv2.rectangle(display, (x1, y2 + 10), (x1 + bar_width, y2 + 30), bar_color, -1)
+                cv2.putText(display, f"Stable: {stability_count}/{STABILITY_FRAMES}", (x1, y2 + 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     # Status bar at top
     cv2.rectangle(display, (0, 0), (display.shape[1], 100), (0, 0, 0), -1)
@@ -230,10 +279,18 @@ while card_count < TARGET_CARDS:
 
     key = cv2.waitKey(1) & 0xFF
 
+    # Check for auto-capture trigger
+    auto_triggered = False
+    if AUTO_CAPTURE and stability_count >= STABILITY_FRAMES and current_prediction:
+        if last_stable_prediction != current_prediction:  # Don't re-capture same card
+            auto_triggered = True
+            last_stable_prediction = current_prediction
+
     if key == ord('q'):
         print("\nQuitting early...")
         break
-    elif (key == ord(' ') or key == 13) and current_prediction:  # SPACE or ENTER = correct
+
+    elif (key == ord(' ') or key == 13 or auto_triggered) and current_prediction:  # SPACE/ENTER/AUTO = correct
         card_count += 1
         result = TestResult(
             card_number=card_count,
@@ -244,8 +301,19 @@ while card_count < TARGET_CARDS:
             top3_predictions=current_top3
         )
         results.append(result)
-        print(f"Card {card_count}: CORRECT - {current_prediction} ({current_confidence:.2f})")
+
+        # Save crop
+        if SAVE_CROPS and current_crop is not None:
+            crop_filename = f"{CROPS_DIR}/card_{card_count:02d}_correct_{current_prediction[:30].replace(' ', '_').replace('//', '-')}.jpg"
+            cv2.imwrite(crop_filename, current_crop)
+
+        trigger = "AUTO" if auto_triggered else "MANUAL"
+        print(f"Card {card_count} [{trigger}]: CORRECT - {current_prediction} ({current_confidence:.2f})")
+
+        # Reset for next card
         current_prediction = None
+        stability_count = 0
+        stability_history = []
 
     elif key == ord('x') and current_prediction:  # X = wrong
         card_count += 1
@@ -258,8 +326,19 @@ while card_count < TARGET_CARDS:
             top3_predictions=current_top3
         )
         results.append(result)
+
+        # Save crop for review
+        if SAVE_CROPS and current_crop is not None:
+            crop_filename = f"{CROPS_DIR}/card_{card_count:02d}_WRONG_{current_prediction[:30].replace(' ', '_').replace('//', '-')}.jpg"
+            cv2.imwrite(crop_filename, current_crop)
+
         print(f"Card {card_count}: WRONG - predicted {current_prediction} ({current_confidence:.2f})")
+
+        # Reset for next card
         current_prediction = None
+        stability_count = 0
+        stability_history = []
+        last_stable_prediction = None  # Allow re-detection of same card if wrong
 
     elif key == ord('g'):  # G = toggle glare correction
         glare_enabled = not glare_enabled
