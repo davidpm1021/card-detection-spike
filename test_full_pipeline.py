@@ -32,16 +32,13 @@ embed_model.eval()
 print("Embedding model loaded!")
 
 print("Loading FAISS index...")
-index = faiss.read_index('training/output/card_embeddings.faiss')
+index = faiss.read_index('training/output/card_embeddings_full.faiss')
 print(f"Index loaded ({index.ntotal} cards)")
 
 print("Loading card names...")
-with open('training/output/label_mapping.json', 'r') as f:
+with open('training/output/label_mapping_full.json', 'r') as f:
     mapping = json.load(f)
-idx_to_name = mapping["idx_to_name"]
-card_names = [""] * (max(int(k) for k in idx_to_name.keys()) + 1)
-for idx, name in idx_to_name.items():
-    card_names[int(idx)] = name
+card_names = mapping["card_names"]
 print(f"Loaded {len(card_names)} card names")
 
 transform = A.Compose([
