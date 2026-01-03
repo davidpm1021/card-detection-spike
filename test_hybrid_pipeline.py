@@ -32,6 +32,10 @@ MIN_OCR_SIMILARITY = 0.6  # Fuzzy match threshold for OCR
 OCR_INTERVAL = 1.0  # Only run OCR every N seconds (saves CPU)
 EMB_CONFIDENCE_FOR_OCR = 0.55  # Only run OCR if embedding below this
 
+# Motion-based re-identification
+MOVE_THRESHOLD = 50  # Pixels card must move to trigger re-identification
+HIGH_CONFIDENCE = 0.65  # Once we hit this, lock in identification
+
 # --- Load models ---
 print("Loading YOLO model...")
 from ultralytics import YOLO
@@ -203,6 +207,27 @@ frame_count = 0
 last_ocr_time = 0
 cached_ocr_result = ("", 0.0)
 
+# Locked identification state (motion-based)
+locked_card = None  # Card name once locked
+locked_confidence = 0.0
+locked_level = ""
+locked_box = None  # (x1, y1, x2, y2) when locked
+is_locked = False
+
+def box_center(box):
+    """Get center point of a box."""
+    x1, y1, x2, y2 = box
+    return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+def box_moved(box1, box2, threshold):
+    """Check if box moved more than threshold pixels."""
+    if box1 is None or box2 is None:
+        return True
+    c1 = box_center(box1)
+    c2 = box_center(box2)
+    dist = ((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2) ** 0.5
+    return dist > threshold
+
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -218,80 +243,118 @@ while True:
     if len(results.boxes) > 0:
         box = results.boxes[0]
         x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+        current_box = (x1, y1, x2, y2)
 
         # Draw detection box
-        cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        box_color = (0, 255, 0) if not is_locked else (255, 200, 0)  # Yellow when locked
+        cv2.rectangle(display, (x1, y1), (x2, y2), box_color, 2)
 
         card_img = frame[y1:y2, x1:x2]
         if card_img.size > 0:
-            # Get embedding matches
-            embedding = get_embedding(card_img)
-            embedding_matches = get_embedding_matches(embedding, top_k=5)
+            # Check if we should use locked identification or re-identify
+            card_moved = box_moved(locked_box, current_box, MOVE_THRESHOLD)
 
-            # OCR (only when embedding uncertain AND enough time passed)
-            current_time = time.time()
-            emb_top1_conf = embedding_matches[0][1] if embedding_matches else 0
+            if is_locked and not card_moved:
+                # Card hasn't moved - use locked identification (FAST PATH)
+                confirmed_card = locked_card
+                confirmed_confidence = locked_confidence
+                confirmed_level = locked_level + " [LOCKED]"
+                emb_top1_conf = locked_confidence  # For display
 
-            # Only run OCR if embedding is uncertain
-            if emb_top1_conf < EMB_CONFIDENCE_FOR_OCR and current_time - last_ocr_time > OCR_INTERVAL:
-                title_region = extract_title_region(card_img)
-                ocr_text = ocr_title(title_region)
-                ocr_match, ocr_score = find_best_ocr_match(ocr_text)
-                cached_ocr_result = (ocr_match, ocr_score)
-                last_ocr_time = current_time
+                # Display locked status
+                cv2.putText(display, "LOCKED - card stable", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2)
             else:
-                ocr_match, ocr_score = cached_ocr_result
+                # Card moved or not locked - run identification
+                if is_locked and card_moved:
+                    # Unlock due to movement
+                    is_locked = False
+                    locked_card = None
+                    vote_history = []
+                    cv2.putText(display, "UNLOCKED - card moved", (10, 60),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 100, 255), 2)
 
-            # Combine results
-            card_name, confidence, level = combine_results(
-                embedding_matches, ocr_match, ocr_score
-            )
+                # Get embedding matches
+                embedding = get_embedding(card_img)
+                embedding_matches = get_embedding_matches(embedding, top_k=5)
 
-            # Add to voting history
-            if card_name:
-                vote_history.append((card_name, confidence, level))
-                if len(vote_history) > VOTE_FRAMES * 2:
-                    vote_history = vote_history[-VOTE_FRAMES * 2:]
+                # OCR (only when embedding uncertain AND enough time passed)
+                current_time = time.time()
+                emb_top1_conf = embedding_matches[0][1] if embedding_matches else 0
 
-            # Check for consensus
-            if len(vote_history) >= VOTE_FRAMES:
-                recent_votes = [v[0] for v in vote_history[-VOTE_FRAMES:]]
-                vote_counts = Counter(recent_votes)
-                most_common, count = vote_counts.most_common(1)[0]
+                # Only run OCR if embedding is uncertain
+                if emb_top1_conf < EMB_CONFIDENCE_FOR_OCR and current_time - last_ocr_time > OCR_INTERVAL:
+                    title_region = extract_title_region(card_img)
+                    ocr_text = ocr_title(title_region)
+                    ocr_match, ocr_score = find_best_ocr_match(ocr_text)
+                    cached_ocr_result = (ocr_match, ocr_score)
+                    last_ocr_time = current_time
+                else:
+                    ocr_match, ocr_score = cached_ocr_result
 
-                if count >= VOTE_FRAMES - 1:  # Allow 1 outlier
-                    confirmed_card = most_common
-                    # Get average confidence for confirmed card
-                    conf_votes = [v[1] for v in vote_history[-VOTE_FRAMES:] if v[0] == most_common]
-                    confirmed_confidence = sum(conf_votes) / len(conf_votes)
-                    confirmed_level = vote_history[-1][2]
+                # Combine results
+                card_name, confidence, level = combine_results(
+                    embedding_matches, ocr_match, ocr_score
+                )
 
-            # Display current prediction
-            if embedding_matches:
-                emb_text = f"Emb: {embedding_matches[0][0][:25]} ({embedding_matches[0][1]:.2f})"
-                cv2.putText(display, emb_text, (x1, y2 + 25),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 0), 1)
+                # Add to voting history
+                if card_name:
+                    vote_history.append((card_name, confidence, level))
+                    if len(vote_history) > VOTE_FRAMES * 2:
+                        vote_history = vote_history[-VOTE_FRAMES * 2:]
 
-            if ocr_match:
-                ocr_text_display = f"OCR: {ocr_match[:25]} ({ocr_score:.2f})"
-                cv2.putText(display, ocr_text_display, (x1, y2 + 45),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 200), 1)
+                # Check for consensus
+                if len(vote_history) >= VOTE_FRAMES:
+                    recent_votes = [v[0] for v in vote_history[-VOTE_FRAMES:]]
+                    vote_counts = Counter(recent_votes)
+                    most_common, count = vote_counts.most_common(1)[0]
 
-            # Show OCR status
-            if emb_top1_conf < EMB_CONFIDENCE_FOR_OCR:
-                cv2.putText(display, "OCR: ACTIVE", (10, 60),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            else:
-                cv2.putText(display, "OCR: SKIP (emb confident)", (10, 60),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 100, 100), 1)
+                    if count >= VOTE_FRAMES - 1:  # Allow 1 outlier
+                        confirmed_card = most_common
+                        # Get average confidence for confirmed card
+                        conf_votes = [v[1] for v in vote_history[-VOTE_FRAMES:] if v[0] == most_common]
+                        confirmed_confidence = sum(conf_votes) / len(conf_votes)
+                        confirmed_level = vote_history[-1][2]
+
+                        # Lock if confidence is high enough
+                        if confirmed_confidence >= HIGH_CONFIDENCE and not is_locked:
+                            is_locked = True
+                            locked_card = confirmed_card
+                            locked_confidence = confirmed_confidence
+                            locked_level = confirmed_level
+                            locked_box = current_box
+
+                # Display current prediction
+                if embedding_matches:
+                    emb_text = f"Emb: {embedding_matches[0][0][:25]} ({embedding_matches[0][1]:.2f})"
+                    cv2.putText(display, emb_text, (x1, y2 + 25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 0), 1)
+
+                if ocr_match:
+                    ocr_text_display = f"OCR: {ocr_match[:25]} ({ocr_score:.2f})"
+                    cv2.putText(display, ocr_text_display, (x1, y2 + 45),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 200), 1)
+
+                # Show OCR status
+                if not is_locked:
+                    if emb_top1_conf < EMB_CONFIDENCE_FOR_OCR:
+                        cv2.putText(display, "OCR: ACTIVE", (10, 60),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    else:
+                        cv2.putText(display, "IDENTIFYING...", (10, 60),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
             # Display confirmed result
             if confirmed_card:
                 level_colors = {
                     "HIGH": (0, 255, 0),
+                    "HIGH [LOCKED]": (255, 200, 0),
                     "MEDIUM": (0, 255, 255),
+                    "MEDIUM [LOCKED]": (255, 200, 0),
                     "OCR-ONLY": (255, 255, 0),
+                    "OCR-ONLY [LOCKED]": (255, 200, 0),
                     "EMB-ONLY": (0, 165, 255),
+                    "EMB-ONLY [LOCKED]": (255, 200, 0),
                 }
                 color = level_colors.get(confirmed_level, (255, 255, 255))
 
@@ -301,9 +364,12 @@ while True:
                 cv2.putText(display, f"{confirmed_level} ({confirmed_confidence:.2f})",
                            (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     else:
-        # No detection - reset voting
+        # No detection - reset everything
         vote_history = []
         confirmed_card = None
+        is_locked = False
+        locked_card = None
+        locked_box = None
 
     # FPS display
     fps = 1.0 / (time.time() - start)
