@@ -1,0 +1,74 @@
+# Test Conditions
+# webcam_resolution,1920x1080
+# surface,wood grain desk
+# lighting,typical room
+# sleeves,yes
+# glare_correction,yes
+# date,2026-01-03 17:10
+
+card_number,actual_name,predicted_name,confidence,correct,top3_predictions
+1,Scaled Behemoth,Scaled Behemoth,0.531,True,"Scaled Behemoth (0.53), Reach of Branches (0.43), Ascendant Packleader (0.41)"
+2,[wrong],Dragon Fangs,0.378,False,"Dragon Fangs (0.38), Stampeding Serow (0.38), Albino Troll (0.38)"
+3,Silverback Shaman,Silverback Shaman,0.520,True,"Silverback Shaman (0.52), Commander's Insight (0.45), Shadowmage Infiltrator (0.43)"
+4,Silverback Shaman,Silverback Shaman,0.511,True,"Silverback Shaman (0.51), Commander's Insight (0.43), Shadowmage Infiltrator (0.41)"
+5,Entourage of Trest,Entourage of Trest,0.687,True,"Entourage of Trest (0.69), Isareth the Awakener (0.41), Lord of the Unreal (0.40)"
+6,[wrong],Norwood Archers,0.487,False,"Norwood Archers (0.49), Sentinel Spider (0.48), Skullsnatcher (0.47)"
+7,Ambush Viper,Ambush Viper,0.695,True,"Ambush Viper (0.69), Barbtooth Wurm (0.45), Fretwork Colony (0.44)"
+8,Fertilid,Fertilid,0.520,True,"Fertilid (0.52), Auntie's Snitch (0.47), Flourishing Defenses (0.47)"
+9,Molder Beast,Molder Beast,0.600,True,"Molder Beast (0.60), Deepfathom Skulker (0.51), Caustic Crawler (0.49)"
+10,Wildheart Invoker,Wildheart Invoker,0.505,True,"Wildheart Invoker (0.50), Wilfred Mott (0.42), Deadeye Tracker (0.39)"
+11,Fin-Clade Fugitives,Fin-Clade Fugitives,0.596,True,"Fin-Clade Fugitives (0.60), Surgeon General Commander (0.47), Berserk (0.47)"
+12,[wrong],Tovolar's Huntmaster // Tovolar's Packleader,0.517,False,"Tovolar's Huntmaster // Tovolar's Packleader (0.52), Goblin Warrens (0.48), Vorinclex, Voice of Hunger (0.48)"
+13,[wrong],Opal Lake Gatekeepers,0.507,False,"Opal Lake Gatekeepers (0.51), Murder Investigation (0.48), Kambal, Profiteering Mayor (0.45)"
+14,Devkarin Dissident,Devkarin Dissident,0.515,True,"Devkarin Dissident (0.51), Leela, Sevateem Warrior (0.49), Nessian Courser (0.48)"
+15,[wrong],Irresistible Prey,0.511,False,"Irresistible Prey (0.51), Haru, Hidden Talent (0.48), Nylea's Intervention (0.48)"
+16,Thrashing Brontodon,Thrashing Brontodon,0.596,True,"Thrashing Brontodon (0.60), Blorbian Buddy (0.50), Cultivator of Blades (0.47)"
+17,[wrong],Stench of Evil,0.525,False,"Stench of Evil (0.53), Unblinking Observer (0.50), Steamflogger Service Rep (0.45)"
+18,[wrong],Wolfir Avenger,0.457,False,"Wolfir Avenger (0.46), Gangrenous Zombies (0.42), Recall (0.41)"
+19,[wrong],Wolfir Avenger,0.480,False,"Wolfir Avenger (0.48), Gangrenous Zombies (0.42), Voice of the Vermin (0.41)"
+20,Farhaven Elf,Farhaven Elf,0.610,True,"Farhaven Elf (0.61), Neyam Shai Murad (0.52), Alela, Cunning Conqueror (0.50)"
+21,Farhaven Elf,Farhaven Elf,0.614,True,"Farhaven Elf (0.61), Neyam Shai Murad (0.51), Alela, Cunning Conqueror (0.50)"
+22,Cruel Feeding,Cruel Feeding,0.694,True,"Cruel Feeding (0.69), Court of Locthwain (0.48), Tragic Banshee (0.44)"
+23,[wrong],Bonecaller Cleric,0.485,False,"Bonecaller Cleric (0.48), Knight of Infamy (0.46), Bloodcrazed Hoplite (0.45)"
+24,[wrong],Evil Eye of Orms-by-Gore,0.668,False,"Evil Eye of Orms-by-Gore (0.67), Become the Pilot (0.57), Pristine Talisman (0.54)"
+25,[wrong],Transgress the Mind,0.428,False,"Transgress the Mind (0.43), Yavimaya Sapherd (0.42), Wolfir Avenger (0.42)"
+26,[wrong],Caustic Crawler,0.432,False,"Caustic Crawler (0.43), Song of Blood (0.40), Gavony Township (0.40)"
+27,Omen of the Hunt,Omen of the Hunt,0.654,True,"Omen of the Hunt (0.65), Douse in Gloom (0.52), Khenra Eternal (0.51)"
+28,[wrong],Emperor of Bones,0.542,False,"Emperor of Bones (0.54), Wizened Arbiter (0.53), Zoanthrope (0.53)"
+29,[wrong],Berserk,0.551,False,"Berserk (0.55), Hydra's Growth (0.54), Wolf-Skull Shaman (0.54)"
+30,Soul's Might,Soul's Might,0.603,True,"Soul's Might (0.60), Stag Beetle (0.48), Fallen Angel (0.47)"
+31,Soul's Might,Soul's Might,0.575,True,"Soul's Might (0.58), Catapult Squad (0.50), Fallen Angel (0.49)"
+32,Setessan Training,Setessan Training,0.582,True,"Setessan Training (0.58), Enslaved Dwarf (0.45), Prying Eyes (0.44)"
+33,[wrong],Battle of Hoover Dam,0.500,False,"Battle of Hoover Dam (0.50), Ancient Animus (0.44), Satyr Grovedancer (0.42)"
+34,[wrong],Ancient Animus,0.476,False,"Ancient Animus (0.48), Battle of Hoover Dam (0.46), Might of the Masses (0.43)"
+35,[wrong],Unnerving Grasp,0.515,False,"Unnerving Grasp (0.51), Gatebreaker Ram (0.49), Skycat Sovereign (0.48)"
+36,Hyrax Tower Scout,Hyrax Tower Scout,0.519,True,"Hyrax Tower Scout (0.52), Fallen Angel (0.47), Vital Splicer (0.46)"
+37,Storm the Citadel,Storm the Citadel,0.635,True,"Storm the Citadel (0.64), Dovin's Acuity (0.50), Specimen Freighter (0.49)"
+38,Wildsize,Wildsize,0.725,True,"Wildsize (0.72), Sunstrike Legionnaire (0.50), Sonic Burst (0.47)"
+39,Hunter's Insight,Hunter's Insight,0.554,True,"Hunter's Insight (0.55), Trolls of Tel-Jilad (0.47), Invulnerability (0.46)"
+40,Feast of Dreams,Feast of Dreams,0.750,True,"Feast of Dreams (0.75), Bitter Revelation (0.55), Dark Remedy (0.52)"
+41,Cruel Feeding,Cruel Feeding,0.645,True,"Cruel Feeding (0.64), Hope and Glory (0.47), Court of Locthwain (0.45)"
+42,Skull Raid,Skull Raid,0.696,True,"Skull Raid (0.70), Myr Turbine (0.48), Aetherblade Agent // Gitaxian Mindstinger (0.45)"
+43,Skull Raid,Skull Raid,0.752,True,"Skull Raid (0.75), Fleshwrither (0.49), Gitaxian Probe (0.46)"
+44,Karfell Kennel-Master,Karfell Kennel-Master,0.598,True,"Karfell Kennel-Master (0.60), Douse in Gloom (0.53), Lord of Shatterskull Pass (0.49)"
+45,Serpentine Kavu,Serpentine Kavu,0.674,True,"Serpentine Kavu (0.67), Necrite (0.50), Pulse of Llanowar (0.50)"
+46,Nomadic Elf,Nomadic Elf,0.740,True,"Nomadic Elf (0.74), Tithe (0.46), Seton, Krosan Protector (0.43)"
+47,Pincer Spider,Pincer Spider,0.562,True,"Pincer Spider (0.56), Frightcrawler (0.48), Feedback (0.47)"
+48,Aggressive Urge,Aggressive Urge,0.637,True,"Aggressive Urge (0.64), Torment (0.57), Mortuary (0.51)"
+49,Pulse of Llanowar,Pulse of Llanowar,0.734,True,"Pulse of Llanowar (0.73), Phantom Centaur (0.52), Citanul Hierophants (0.52)"
+50,[wrong],Carrion,0.500,False,"Carrion (0.50), Search for Survivors (0.47), Noxious Dragon (0.46)"
+51,Wedding Security,Wedding Security,0.723,True,"Wedding Security (0.72), Pontiff of Blight (0.51), Zhentarim Bandit (0.50)"
+52,[wrong],"Tinybones, the Pickpocket",0.487,False,"Tinybones, the Pickpocket (0.49), Spirits (0.44), Dai Li Censor (0.43)"
+53,[wrong],Shadowcloak Vampire,0.485,False,"Shadowcloak Vampire (0.48), Vindictive Vampire (0.48), Tenacious Dead (0.48)"
+54,[wrong],"Carmen, Cruel Skymarcher",0.422,False,"Carmen, Cruel Skymarcher (0.42), Consuming Aberration (0.38), Bloodthirsty Adversary (0.38)"
+55,Innocent Traveler // Malicious Invader,Innocent Traveler // Malicious Invader,0.678,True,"Innocent Traveler // Malicious Invader (0.68), Creeping Chill (0.46), Bottle of Suleiman (0.46)"
+56,Innocent Traveler // Malicious Invader,Innocent Traveler // Malicious Invader,0.711,True,"Innocent Traveler // Malicious Invader (0.71), Bottle of Suleiman (0.47), Last Kiss (0.47)"
+57,[wrong],Blood Burglar,0.551,False,"Blood Burglar (0.55), Halvar, God of Battle // Sword of the Realms (0.52), Gumdrop Poisoner // Tempt with Treats (0.51)"
+58,Archghoul of Thraben,Archghoul of Thraben,0.605,True,"Archghoul of Thraben (0.61), Nezumi Linkbreaker (0.49), Storm, Force of Nature (0.45)"
+59,Maestros Initiate,Maestros Initiate,0.655,True,"Maestros Initiate (0.66), Skyblinder Staff (0.43), Ravenous Demon // Archdemon of Greed (0.43)"
+60,[wrong],Leech Gauntlet,0.469,False,"Leech Gauntlet (0.47), Nightmare Moon // Princess Luna (0.45), Sword of Dungeons & Dragons (0.44)"
+
+# Summary
+# Total cards,60
+# Correct,37
+# Accuracy,61.7%
