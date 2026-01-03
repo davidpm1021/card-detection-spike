@@ -54,9 +54,9 @@ files_to_check = [
 for f in files_to_check:
     if os.path.exists(f):
         size = os.path.getsize(f)
-        print(f"✓ {f}: {size:,} bytes")
+        print(f"OK {f}: {size:,} bytes")
     else:
-        print(f"✗ {f}: MISSING!")
+        print(f"MISSING {f}!")
 
 # 3. Check FAISS index
 print("\n[3] FAISS INDEX CHECK")
