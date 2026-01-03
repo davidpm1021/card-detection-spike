@@ -23,6 +23,7 @@ from albumentations.pytorch import ToTensorV2
 from dataclasses import dataclass
 
 # --- Configuration ---
+CAMERA_INDEX = 1  # 0 = front camera, 1 = rear/external camera
 CONFIDENCE_THRESHOLD = 0.6
 TARGET_CARDS = 60
 GLARE_CORRECTION = True  # Toggle glare correction preprocessing
@@ -150,10 +151,12 @@ print("  Q = Quit and save results")
 print(f"\nGlare correction: {'ON' if GLARE_CORRECTION else 'OFF'}")
 print("="*60)
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(CAMERA_INDEX)
 if not cap.isOpened():
-    print("ERROR: Cannot open webcam")
+    print(f"ERROR: Cannot open camera {CAMERA_INDEX}")
+    print("Try changing CAMERA_INDEX at top of script (0, 1, 2...)")
     sys.exit(1)
+print(f"Using camera index: {CAMERA_INDEX}")
 
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
