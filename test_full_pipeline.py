@@ -51,7 +51,7 @@ transform = A.Compose([
 ])
 
 print("\nOpening webcam...")
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)  # Use external webcam (change to 0 for built-in)
 if not cap.isOpened():
     print("ERROR: Cannot open webcam")
     sys.exit(1)
