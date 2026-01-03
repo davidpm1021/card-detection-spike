@@ -267,10 +267,12 @@ while True:
             else:
                 # Card moved or not locked - run identification
                 if is_locked and card_moved:
-                    # Unlock due to movement
+                    # Unlock due to movement - reset everything including OCR cache
                     is_locked = False
                     locked_card = None
                     vote_history = []
+                    cached_ocr_result = ("", 0.0)  # Reset OCR cache!
+                    last_ocr_time = 0  # Force OCR to run again
                     cv2.putText(display, "UNLOCKED - card moved", (10, 60),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 100, 255), 2)
 
@@ -282,8 +284,11 @@ while True:
                 current_time = time.time()
                 emb_top1_conf = embedding_matches[0][1] if embedding_matches else 0
 
+                # Run OCR more aggressively when not confirmed yet
+                ocr_interval = 0.5 if confirmed_card is None else OCR_INTERVAL
+
                 # Only run OCR if embedding is uncertain
-                if emb_top1_conf < EMB_CONFIDENCE_FOR_OCR and current_time - last_ocr_time > OCR_INTERVAL:
+                if emb_top1_conf < EMB_CONFIDENCE_FOR_OCR and current_time - last_ocr_time > ocr_interval:
                     title_region = extract_title_region(card_img)
                     ocr_text = ocr_title(title_region)
                     ocr_match, ocr_score = find_best_ocr_match(ocr_text)
@@ -370,6 +375,8 @@ while True:
         is_locked = False
         locked_card = None
         locked_box = None
+        cached_ocr_result = ("", 0.0)  # Reset OCR cache
+        last_ocr_time = 0
 
     # FPS display
     fps = 1.0 / (time.time() - start)
