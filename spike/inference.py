@@ -437,7 +437,18 @@ class CardIdentifier:
         print(f"Loading label mapping from {mapping_path}...")
         with open(mapping_path, "r", encoding="utf-8") as f:
             mapping = json.load(f)
-        self.card_names = mapping["card_names"]
+        # Support both formats: "card_names" list or "idx_to_name" dict
+        if "card_names" in mapping:
+            self.card_names = mapping["card_names"]
+        elif "idx_to_name" in mapping:
+            # Convert idx_to_name dict to list
+            idx_to_name = mapping["idx_to_name"]
+            max_idx = max(int(k) for k in idx_to_name.keys())
+            self.card_names = [""] * (max_idx + 1)
+            for idx, name in idx_to_name.items():
+                self.card_names[int(idx)] = name
+        else:
+            raise ValueError("Label mapping must contain 'card_names' or 'idx_to_name'")
         print(f"Loaded {len(self.card_names)} card names")
 
         # Setup transform

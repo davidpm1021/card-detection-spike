@@ -19,7 +19,7 @@ class YOLODetector:
     def __init__(
         self,
         model_path: Optional[str] = None,
-        conf_threshold: float = 0.5,
+        conf_threshold: float = 0.6,
         iou_threshold: float = 0.5,
     ):
         """
@@ -40,14 +40,14 @@ class YOLODetector:
             script_dir = Path(__file__).parent
             training_dir = script_dir.parent / "training" / "yolo"
 
-            # Try ONNX first (faster, no PyTorch needed)
-            onnx_path = training_dir / "runs" / "detect" / "train" / "weights" / "best.onnx"
+            # Try PyTorch first (more reliable), then ONNX
             pt_path = training_dir / "runs" / "detect" / "train" / "weights" / "best.pt"
+            onnx_path = training_dir / "runs" / "detect" / "train" / "weights" / "best.onnx"
 
-            if onnx_path.exists():
-                model_path = str(onnx_path)
-            elif pt_path.exists():
+            if pt_path.exists():
                 model_path = str(pt_path)
+            elif onnx_path.exists():
+                model_path = str(onnx_path)
             else:
                 raise FileNotFoundError(
                     f"No trained YOLO model found. Expected at:\n"
@@ -237,6 +237,66 @@ class YOLODetector:
             cards = self._apply_nms(cards)
 
         return cards
+
+    def extract_card(self, frame: np.ndarray, corners: np.ndarray, target_size=(224, 224)) -> np.ndarray:
+        """
+        Extract and warp card region to standard size.
+
+        Args:
+            frame: Input BGR image
+            corners: Card corner coordinates (4, 2)
+            target_size: Output image size (height, width)
+
+        Returns:
+            Warped card image
+        """
+        import cv2
+
+        corners = self._order_corners(corners)
+
+        # Target corners for perspective transform
+        # Card dimensions: 63mm x 88mm, scaled to target size maintaining aspect
+        card_aspect = 63 / 88
+        target_h, target_w = target_size
+
+        if target_w / target_h > card_aspect:
+            new_w = int(target_h * card_aspect)
+            new_h = target_h
+        else:
+            new_w = target_w
+            new_h = int(target_w / card_aspect)
+
+        dst_corners = np.array([
+            [0, 0],
+            [new_w - 1, 0],
+            [new_w - 1, new_h - 1],
+            [0, new_h - 1]
+        ], dtype=np.float32)
+
+        # Perspective transform
+        matrix = cv2.getPerspectiveTransform(corners, dst_corners)
+        warped = cv2.warpPerspective(frame, matrix, (new_w, new_h))
+
+        # Resize to target size
+        warped = cv2.resize(warped, target_size)
+
+        return warped
+
+    def _order_corners(self, corners: np.ndarray) -> np.ndarray:
+        """Order corners: top-left, top-right, bottom-right, bottom-left."""
+        corners = corners.astype(np.float32)
+        # Sort by y-coordinate (top to bottom)
+        corners = corners[np.argsort(corners[:, 1])]
+
+        # Top two points
+        top = corners[:2]
+        top = top[np.argsort(top[:, 0])]  # Sort by x (left to right)
+
+        # Bottom two points
+        bottom = corners[2:]
+        bottom = bottom[np.argsort(bottom[:, 0])]  # Sort by x (left to right)
+
+        return np.array([top[0], top[1], bottom[1], bottom[0]], dtype=np.float32)
 
     def _apply_nms(
         self,
