@@ -29,6 +29,8 @@ CAMERA_INDEX = 1  # 0 = front camera, 1 = rear camera
 CONFIDENCE_THRESHOLD = 0.6
 VOTE_FRAMES = 5  # Require this many consistent frames
 MIN_OCR_SIMILARITY = 0.6  # Fuzzy match threshold for OCR
+OCR_INTERVAL = 1.0  # Only run OCR every N seconds (saves CPU)
+EMB_CONFIDENCE_FOR_OCR = 0.55  # Only run OCR if embedding below this
 
 # --- Load models ---
 print("Loading YOLO model...")
@@ -226,9 +228,12 @@ while True:
             embedding = get_embedding(card_img)
             embedding_matches = get_embedding_matches(embedding, top_k=5)
 
-            # OCR (throttled to every 0.3 seconds for performance)
+            # OCR (only when embedding uncertain AND enough time passed)
             current_time = time.time()
-            if current_time - last_ocr_time > 0.3:
+            emb_top1_conf = embedding_matches[0][1] if embedding_matches else 0
+
+            # Only run OCR if embedding is uncertain
+            if emb_top1_conf < EMB_CONFIDENCE_FOR_OCR and current_time - last_ocr_time > OCR_INTERVAL:
                 title_region = extract_title_region(card_img)
                 ocr_text = ocr_title(title_region)
                 ocr_match, ocr_score = find_best_ocr_match(ocr_text)
@@ -271,6 +276,14 @@ while True:
                 ocr_text_display = f"OCR: {ocr_match[:25]} ({ocr_score:.2f})"
                 cv2.putText(display, ocr_text_display, (x1, y2 + 45),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 200), 1)
+
+            # Show OCR status
+            if emb_top1_conf < EMB_CONFIDENCE_FOR_OCR:
+                cv2.putText(display, "OCR: ACTIVE", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            else:
+                cv2.putText(display, "OCR: SKIP (emb confident)", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 100, 100), 1)
 
             # Display confirmed result
             if confirmed_card:
