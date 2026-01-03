@@ -86,6 +86,10 @@ while True:
         if card_img.size == 0:
             continue
 
+        # Debug: print crop size
+        h, w = card_img.shape[:2]
+        print(f"Crop size: {w}x{h}")
+
         # Get embedding using original crop (not resized)
         rgb = cv2.cvtColor(card_img, cv2.COLOR_BGR2RGB)
         transformed = transform(image=rgb)
@@ -94,9 +98,13 @@ while True:
         with torch.no_grad():
             embedding = embed_model.get_embedding(tensor).numpy()
 
+        # Debug: check embedding norm
+        norm_before = np.linalg.norm(embedding)
+
         # Normalize and search
         faiss.normalize_L2(embedding)
         distances, indices = index.search(embedding, 5)  # Get top 5
+        print(f"Embedding norm before/after: {norm_before:.3f}/1.000")
 
         if indices[0][0] < len(card_names):
             card_name = card_names[indices[0][0]]
