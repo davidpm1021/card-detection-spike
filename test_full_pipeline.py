@@ -53,6 +53,13 @@ if not cap.isOpened():
     print("ERROR: Cannot open webcam")
     sys.exit(1)
 
+# Set higher resolution (try 1080p, fall back to 720p)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+print(f"Webcam resolution: {actual_w}x{actual_h}")
+
 print("Webcam opened! Press 'q' to quit.")
 cv2.namedWindow('Card Detection + ID', cv2.WINDOW_NORMAL)
 
