@@ -86,8 +86,16 @@ while True:
         if card_img.size == 0:
             continue
 
+        # Debug: save card crop on 's' key
+        if cv2.waitKey(1) & 0xFF == ord('s'):
+            cv2.imwrite('debug_card_crop.jpg', card_img)
+            print(f"Saved debug_card_crop.jpg ({card_img.shape})")
+
+        # Resize card to consistent size for embedding (224x224)
+        card_resized = cv2.resize(card_img, (224, 224))
+
         # Get embedding
-        rgb = cv2.cvtColor(card_img, cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(card_resized, cv2.COLOR_BGR2RGB)
         transformed = transform(image=rgb)
         tensor = transformed["image"].unsqueeze(0)
 
