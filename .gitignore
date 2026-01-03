@@ -42,7 +42,12 @@ training/data/bulk_cards.json
 
 # Model checkpoints (too large for git)
 training/checkpoints/
-training/output/
+
+# Training output - ignore most but keep model files
+training/output/*
+!training/output/*.onnx
+!training/output/*.faiss
+!training/output/*.json
 
 # Temp files
 *.tmp

@@ -85,3 +85,60 @@ pip install -r requirements.txt
 # Run
 python spike/spike.py
 ```
+
+---
+
+## Production Deployment Architecture (Post-Spike)
+
+### Use Case
+
+Remote MTG play over Discord video. Each player:
+1. Has OBS combining face cam + card cam → virtual webcam → Discord
+2. Sees friends' playmats via Discord video call
+3. Wants card names overlaid on friends' video streams
+
+### Architecture Decision: Desktop Overlay Application
+
+```
+Friend's OBS → Discord Video → Your Discord Window
+                                      ↓
+                              Screen/Window Capture
+                                      ↓
+                              YOLO Detection
+                                      ↓
+                              Card Identification (ONNX)
+                                      ↓
+                              Transparent Overlay Window
+```
+
+### Why Not Web App?
+
+- Need to capture Discord window (browser can't do this)
+- Need transparent overlay on desktop
+- Local processing avoids bandwidth issues while streaming
+
+### Packaging Strategy
+
+- **PyInstaller** to create standalone .exe (Windows) / .app (Mac)
+- Bundle: Python + PyTorch/ONNX Runtime + OpenCV + YOLO model + embedding model + FAISS index
+- Expected size: 300-500MB
+- User experience: "Download, unzip, run"
+
+### Critical: ONNX for Cross-Platform Consistency
+
+**Problem discovered:** PyTorch produces different embeddings on different builds:
+- PyTorch 2.6.0+cu124 (CUDA) vs PyTorch 2.6.0+cpu produce DIFFERENT embeddings
+- FAISS index built with CUDA embeddings won't match CPU inference
+
+**Solution:** Export embedding model to ONNX format
+- ONNX Runtime produces identical results across all platforms
+- Smaller runtime dependency than full PyTorch
+- Faster inference
+
+### Distribution Plan
+
+1. Export models to ONNX (embedding model + optionally YOLO)
+2. Generate FAISS index using ONNX embeddings
+3. Package with PyInstaller for Windows
+4. Package for Mac (requires Mac for building)
+5. Distribute via GitHub Releases or shared drive
