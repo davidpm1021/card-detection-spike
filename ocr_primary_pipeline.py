@@ -269,27 +269,30 @@ def identify_card_fast(card_img, cached_ocr):
     emb_matches = get_embedding_matches(embedding, top_k=5)
 
     # Use cached OCR + fresh embedding
+    emb_names = [m[0] for m in emb_matches]
+    emb_top1 = emb_matches[0] if emb_matches else (None, 0)
+
     if ocr_text:
         best_match, match_score = find_best_match(ocr_text, emb_matches)
 
         if best_match and match_score >= MIN_OCR_SIMILARITY:
-            emb_names = [m[0] for m in emb_matches]
-            emb_top1 = emb_matches[0] if emb_matches else (None, 0)
-
+            # REQUIRE embedding verification to prevent false positives
             if best_match == emb_top1[0]:
+                # Perfect: OCR and embedding agree on #1
                 confidence = (match_score + emb_top1[1]) / 2 + 0.1
                 return best_match, min(1.0, confidence), "OCR+EMB"
             elif best_match in emb_names:
-                confidence = match_score + 0.05
+                # Good: OCR is in embedding top-5
+                confidence = match_score * 0.8  # Lower confidence since not #1
                 return best_match, min(1.0, confidence), "OCR(verified)"
-            elif match_score >= 0.75:
-                return best_match, match_score, "OCR-HIGH"
-            elif match_score >= MIN_OCR_SIMILARITY:
-                return best_match, match_score * 0.9, "OCR-MED"
+            else:
+                # OCR not verified by embedding - DON'T trust it!
+                # This prevents false positives like "Rite of Raging Storm"
+                pass  # Fall through to embedding-only
 
-    # Fallback: embedding only (when OCR hasn't run yet or failed)
-    if emb_matches and emb_matches[0][1] >= 0.4:
-        return emb_matches[0][0], emb_matches[0][1], "EMB-ONLY"
+    # Embedding only (OCR failed or not verified)
+    if emb_matches and emb_top1[1] >= 0.4:
+        return emb_top1[0], emb_top1[1], "EMB-ONLY"
 
     return None, 0.0, "NONE"
 
