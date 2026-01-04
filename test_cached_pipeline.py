@@ -31,6 +31,7 @@ CONFIDENCE_THRESHOLD = 0.6
 CACHE_SIZE = 50  # Max cards to remember
 PHASH_THRESHOLD = 10  # Max hamming distance to consider same card
 STABLE_FRAMES = 10  # Frames card must be stable before identifying
+MIN_CACHE_CONFIDENCE = 0.60  # Only cache results above this confidence
 
 # --- Perceptual Hash ---
 def compute_phash(img, hash_size=16):
@@ -176,17 +177,21 @@ def find_best_ocr_match(ocr_text):
     if not ocr_text or len(ocr_text) < 3:
         return None, 0.0
 
-    ocr_lower = ocr_text.lower()
+    ocr_lower = ocr_text.lower().strip()
     best_match = None
     best_score = 0.0
 
+    # First try substring matching
     for name in card_names:
-        if ocr_lower in name.lower() or name.lower() in ocr_lower:
-            score = len(min(ocr_lower, name.lower())) / len(max(ocr_lower, name.lower()))
+        name_lower = name.lower()
+        if ocr_lower in name_lower or name_lower in ocr_lower:
+            # Score based on length similarity (fixed bug: was using min/max on strings!)
+            score = min(len(ocr_lower), len(name_lower)) / max(len(ocr_lower), len(name_lower))
             if score > best_score:
                 best_score = score
                 best_match = name
 
+    # If no good substring match, try fuzzy
     if best_score < 0.6:
         for name in card_names:
             score = fuzzy_match(ocr_text, name)
@@ -194,7 +199,8 @@ def find_best_ocr_match(ocr_text):
                 best_score = score
                 best_match = name
 
-    return best_match, best_score
+    # Cap score at 1.0
+    return best_match, min(best_score, 1.0)
 
 def identify_card_full(card_img):
     """Run full identification pipeline on enhanced image."""
@@ -205,25 +211,42 @@ def identify_card_full(card_img):
     embedding = get_embedding(enhanced)
     emb_matches = get_embedding_matches(embedding, top_k=5)
     emb_top = emb_matches[0] if emb_matches else (None, 0.0)
+    emb_names = [m[0] for m in emb_matches]
 
     # Get OCR
     title_region = extract_title_region(enhanced)
     ocr_text = ocr_title(title_region)
     ocr_match, ocr_score = find_best_ocr_match(ocr_text)
 
-    # Combine results
+    # Combine results - embedding preferred when confident
+    # Case 1: Both agree - highest confidence
     if ocr_match and ocr_match == emb_top[0]:
-        # Both agree - high confidence
-        return ocr_match, min(1.0, emb_top[1] + 0.2), "HIGH", emb_matches, ocr_text, ocr_score
-    elif ocr_match and ocr_score > 0.7:
-        # Strong OCR match
+        combined_conf = min(1.0, emb_top[1] + 0.15)
+        return ocr_match, combined_conf, "HIGH", emb_matches, ocr_text, ocr_score
+
+    # Case 2: Embedding is very confident (>0.65) - trust it
+    if emb_top[0] and emb_top[1] >= 0.65:
+        return emb_top[0], emb_top[1], "EMB-CONF", emb_matches, ocr_text, ocr_score
+
+    # Case 3: OCR matches something in embedding top-5 - trust OCR
+    if ocr_match and ocr_match in emb_names and ocr_score >= 0.6:
+        idx = emb_names.index(ocr_match)
+        combined_conf = min(1.0, emb_matches[idx][1] + ocr_score * 0.2)
+        return ocr_match, combined_conf, "OCR+EMB", emb_matches, ocr_text, ocr_score
+
+    # Case 4: Strong OCR (>0.75) and embedding is weak (<0.55) - trust OCR
+    if ocr_match and ocr_score >= 0.75 and emb_top[1] < 0.55:
         return ocr_match, ocr_score, "OCR", emb_matches, ocr_text, ocr_score
-    elif emb_top[0] and emb_top[1] > 0.5:
-        # Decent embedding match
+
+    # Case 5: Decent embedding (>0.50) - use it
+    if emb_top[0] and emb_top[1] >= 0.50:
         return emb_top[0], emb_top[1], "EMB", emb_matches, ocr_text, ocr_score
+
+    # Case 6: Low confidence - return best guess
+    if emb_top[1] >= ocr_score:
+        return emb_top[0] or "Unknown", emb_top[1], "LOW", emb_matches, ocr_text, ocr_score
     else:
-        # Low confidence
-        return emb_top[0] or "Unknown", max(emb_top[1], ocr_score), "LOW", emb_matches, ocr_text, ocr_score
+        return ocr_match or "Unknown", ocr_score, "LOW", emb_matches, ocr_text, ocr_score
 
 # --- Main loop ---
 print("\n" + "="*60)
@@ -309,11 +332,14 @@ while True:
                     'ocr_score': ocr_score
                 }
 
-                # Cache it
-                cache.put(phash, current_result)
+                # Only cache high-confidence results
+                if conf >= MIN_CACHE_CONFIDENCE:
+                    cache.put(phash, current_result)
+                    status = "NEW - cached"
+                else:
+                    status = f"NEW - low conf ({conf:.2f})"
                 identifying = False
                 box_color = (255, 200, 0)  # Yellow - just identified
-                status = "NEW - cached"
             else:
                 # Waiting for stability
                 box_color = (200, 200, 200)  # Gray - waiting
