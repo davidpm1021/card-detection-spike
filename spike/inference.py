@@ -26,6 +26,14 @@ import torch
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
+# Try to import ONNX Runtime
+ONNX_AVAILABLE = False
+try:
+    import onnxruntime as ort
+    ONNX_AVAILABLE = True
+except ImportError:
+    pass
+
 # Add training directory to path for model import
 SCRIPT_DIR = Path(__file__).parent
 TRAINING_DIR = SCRIPT_DIR.parent / "training"
@@ -516,10 +524,87 @@ class CardIdentifier:
         return results
 
 
+class ONNXCardIdentifier:
+    """Identifies cards using ONNX model and FAISS index (cross-platform consistent)."""
+
+    def __init__(self, onnx_path, index_path, mapping_path):
+        if not ONNX_AVAILABLE:
+            raise RuntimeError("ONNX Runtime not installed. Install with: pip install onnxruntime")
+
+        # Load ONNX model
+        print(f"Loading ONNX model from {onnx_path}...")
+        self.session = ort.InferenceSession(str(onnx_path))
+        self.input_name = self.session.get_inputs()[0].name
+        print(f"ONNX model loaded")
+
+        # Load FAISS index
+        print(f"Loading FAISS index from {index_path}...")
+        self.index = faiss.read_index(str(index_path))
+        print(f"Index loaded ({self.index.ntotal} cards)")
+
+        # Load label mapping
+        print(f"Loading label mapping from {mapping_path}...")
+        with open(mapping_path, "r", encoding="utf-8") as f:
+            mapping = json.load(f)
+        if "card_names" in mapping:
+            self.card_names = mapping["card_names"]
+        elif "idx_to_name" in mapping:
+            idx_to_name = mapping["idx_to_name"]
+            max_idx = max(int(k) for k in idx_to_name.keys())
+            self.card_names = [""] * (max_idx + 1)
+            for idx, name in idx_to_name.items():
+                self.card_names[int(idx)] = name
+        else:
+            raise ValueError("Label mapping must contain 'card_names' or 'idx_to_name'")
+        print(f"Loaded {len(self.card_names)} card names")
+
+        # Setup transform
+        self.transform = A.Compose([
+            A.Resize(224, 224),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ])
+
+    def identify(self, card_image, top_k=3, try_rotations=True):
+        """Identify a card from its image."""
+        results = self._identify_single(card_image, top_k)
+
+        if try_rotations:
+            rotated = cv2.rotate(card_image, cv2.ROTATE_180)
+            rotated_results = self._identify_single(rotated, top_k)
+            if rotated_results and (not results or rotated_results[0][1] > results[0][1]):
+                results = rotated_results
+
+        return results
+
+    def _identify_single(self, card_image, top_k=3):
+        """Identify a single orientation of a card."""
+        rgb_image = cv2.cvtColor(card_image, cv2.COLOR_BGR2RGB)
+        transformed = self.transform(image=rgb_image)
+        tensor = transformed["image"].numpy()
+        tensor = np.expand_dims(tensor, axis=0).astype(np.float32)
+
+        # Get embedding from ONNX
+        embedding = self.session.run(None, {self.input_name: tensor})[0]
+        faiss.normalize_L2(embedding)
+
+        # Search index
+        distances, indices = self.index.search(embedding, top_k)
+
+        results = []
+        for dist, idx in zip(distances[0], indices[0]):
+            if idx < len(self.card_names):
+                card_name = self.card_names[idx]
+                confidence = float(dist)
+                results.append((card_name, confidence))
+
+        return results
+
+
 class WebcamInference:
     """Real-time webcam inference pipeline."""
 
-    def __init__(self, model_path, index_path, mapping_path, camera_id=0, resolution="1080p", fast_mode=False, use_yolo=None):
+    def __init__(self, model_path, index_path, mapping_path, camera_id=0, resolution="1080p", fast_mode=False, use_yolo=None, use_onnx=True, onnx_path=None):
         # Select detector
         if use_yolo is None:
             use_yolo = YOLO_AVAILABLE  # Auto-detect
@@ -536,7 +621,18 @@ class WebcamInference:
             self.detector = CardDetector()
             self.detector_type = "contour"
 
-        self.identifier = CardIdentifier(model_path, index_path, mapping_path)
+        # Select identifier (ONNX preferred for consistency with augmented index)
+        if use_onnx and ONNX_AVAILABLE and onnx_path and Path(onnx_path).exists():
+            print("Using ONNX identifier (cross-platform consistent)")
+            self.identifier = ONNXCardIdentifier(onnx_path, index_path, mapping_path)
+            self.identifier_type = "onnx"
+        else:
+            if use_onnx and not ONNX_AVAILABLE:
+                print("ONNX Runtime not available, falling back to PyTorch")
+            elif use_onnx and (not onnx_path or not Path(onnx_path).exists()):
+                print("ONNX model not found, falling back to PyTorch")
+            self.identifier = CardIdentifier(model_path, index_path, mapping_path)
+            self.identifier_type = "pytorch"
         self.camera_id = camera_id
         self.resolution = resolution
         self.fast_mode = fast_mode
@@ -671,9 +767,10 @@ class WebcamInference:
             self.frame_times.append(frame_time)
             fps = 1.0 / frame_time if frame_time > 0 else 0
 
-            # Draw FPS and detector type
+            # Draw FPS and detector/identifier type
             detector_label = "YOLO" if self.detector_type == "yolo" else "Contour"
-            cv2.putText(display_frame, f"FPS: {fps:.1f} ({detector_label})", (10, 30),
+            id_label = "ONNX" if self.identifier_type == "onnx" else "PyTorch"
+            cv2.putText(display_frame, f"FPS: {fps:.1f} ({detector_label}+{id_label})", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             # Draw card count
@@ -818,11 +915,14 @@ def main():
                        default=TRAINING_DIR / "checkpoints" / "final_model.pt",
                        help="Path to model checkpoint")
     parser.add_argument("--index", type=Path,
-                       default=TRAINING_DIR / "output" / "card_embeddings_full.faiss",
-                       help="Path to FAISS index")
+                       default=TRAINING_DIR / "output" / "card_embeddings_aug10_mean.faiss",
+                       help="Path to FAISS index (default: augmented index)")
     parser.add_argument("--mapping", type=Path,
-                       default=TRAINING_DIR / "output" / "label_mapping_full.json",
-                       help="Path to label mapping")
+                       default=TRAINING_DIR / "output" / "label_mapping_aug10_mean.json",
+                       help="Path to label mapping (default: augmented mapping)")
+    parser.add_argument("--onnx", type=Path,
+                       default=TRAINING_DIR / "output" / "card_embedding_model.onnx",
+                       help="Path to ONNX model (for cross-platform consistency)")
     # YOLO detector options
     yolo_group = parser.add_mutually_exclusive_group()
     yolo_group.add_argument("--yolo", action="store_true", dest="use_yolo",
@@ -830,6 +930,13 @@ def main():
     yolo_group.add_argument("--no-yolo", action="store_false", dest="use_yolo",
                            help="Force use contour-based detection (default if no YOLO model)")
     parser.set_defaults(use_yolo=None)  # None = auto-detect
+    # ONNX identifier options
+    onnx_group = parser.add_mutually_exclusive_group()
+    onnx_group.add_argument("--use-onnx", action="store_true", dest="use_onnx",
+                           help="Use ONNX identifier (default, recommended with augmented index)")
+    onnx_group.add_argument("--no-onnx", action="store_false", dest="use_onnx",
+                           help="Use PyTorch identifier instead of ONNX")
+    parser.set_defaults(use_onnx=True)  # Default to ONNX
     args = parser.parse_args()
 
     # Apply fast mode settings
@@ -860,7 +967,8 @@ def main():
         pipeline = WebcamInference(
             args.model, args.index, args.mapping,
             args.camera, args.resolution, fast_mode=args.fast,
-            use_yolo=args.use_yolo
+            use_yolo=args.use_yolo,
+            use_onnx=args.use_onnx, onnx_path=args.onnx
         )
         pipeline.run()
 
