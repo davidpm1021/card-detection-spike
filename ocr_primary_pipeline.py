@@ -29,6 +29,7 @@ CONFIDENCE_THRESHOLD = 0.6
 VOTE_FRAMES = 3  # Fewer frames needed with better OCR
 MIN_OCR_SIMILARITY = 0.65
 MOVE_THRESHOLD = 50
+OCR_INTERVAL = 0.5  # Only run OCR every 0.5 seconds (it's slow!)
 
 # --- Load models ---
 print("Loading YOLO model...")
@@ -252,9 +253,50 @@ def get_embedding_matches(embedding, top_k=5):
     return results
 
 
+def identify_card_fast(card_img, cached_ocr):
+    """
+    Fast card identification using CACHED OCR results.
+
+    OCR is slow, so we run it periodically and cache the result.
+    Embedding is fast, so we run it every frame.
+
+    Returns: (card_name, confidence, method)
+    """
+    ocr_text, ocr_conf = cached_ocr
+
+    # Embedding is fast - run every frame
+    embedding = get_embedding(card_img)
+    emb_matches = get_embedding_matches(embedding, top_k=5)
+
+    # Use cached OCR + fresh embedding
+    if ocr_text:
+        best_match, match_score = find_best_match(ocr_text, emb_matches)
+
+        if best_match and match_score >= MIN_OCR_SIMILARITY:
+            emb_names = [m[0] for m in emb_matches]
+            emb_top1 = emb_matches[0] if emb_matches else (None, 0)
+
+            if best_match == emb_top1[0]:
+                confidence = (match_score + emb_top1[1]) / 2 + 0.1
+                return best_match, min(1.0, confidence), "OCR+EMB"
+            elif best_match in emb_names:
+                confidence = match_score + 0.05
+                return best_match, min(1.0, confidence), "OCR(verified)"
+            elif match_score >= 0.75:
+                return best_match, match_score, "OCR-HIGH"
+            elif match_score >= MIN_OCR_SIMILARITY:
+                return best_match, match_score * 0.9, "OCR-MED"
+
+    # Fallback: embedding only (when OCR hasn't run yet or failed)
+    if emb_matches and emb_matches[0][1] >= 0.4:
+        return emb_matches[0][0], emb_matches[0][1], "EMB-ONLY"
+
+    return None, 0.0, "NONE"
+
+
 def identify_card(card_img):
     """
-    OCR-primary card identification.
+    Full card identification (slower - runs OCR).
 
     Flow:
     1. Run OCR on title region (ALWAYS)
@@ -328,6 +370,10 @@ def main():
     locked_box = None
     debug_mode = False
 
+    # OCR throttling - it's slow so only run periodically
+    last_ocr_time = 0
+    cached_ocr = ("", 0.0)
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -336,7 +382,7 @@ def main():
         start = time.time()
         display = frame.copy()
 
-        # YOLO detection
+        # YOLO detection (fast)
         results = yolo(frame, conf=CONFIDENCE_THRESHOLD, verbose=False)[0]
 
         if len(results.boxes) > 0:
@@ -360,10 +406,18 @@ def main():
                         locked = False
                         vote_history = []
                         confirmed_card = None
+                        cached_ocr = ("", 0.0)  # Reset OCR cache on movement
+                        last_ocr_time = 0
 
                 if not locked:
-                    # Identify card
-                    card_name, conf, method = identify_card(card_img)
+                    # Only run OCR periodically (it's slow!)
+                    current_time = time.time()
+                    if current_time - last_ocr_time >= OCR_INTERVAL:
+                        cached_ocr = ocr_title(card_img)
+                        last_ocr_time = current_time
+
+                    # Fast identification using cached OCR + embedding
+                    card_name, conf, method = identify_card_fast(card_img, cached_ocr)
 
                     if card_name:
                         vote_history.append((card_name, conf, method))
